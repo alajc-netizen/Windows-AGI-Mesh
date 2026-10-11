@@ -3,6 +3,8 @@ namespace AGIMesh {
     open Microsoft.Quantum.Convert;
     open Microsoft.Quantum.Intrinsic;
     open Microsoft.Quantum.Math;
+    open Microsoft.Quantum.Diagnostics;
+    open Microsoft.Quantum.Measurement;
 
     newtype Metric = (
         Name : String,
@@ -27,44 +29,44 @@ namespace AGIMesh {
     );
 
     function Version() : String {
-        "2.1.0"
+        return "2.1.0";
     }
 
     function IsValidScore(v : Double) : Bool {
-        not IsNaN(v)
-        and not IsInfinite(v)
-        and v >= 0.0
-        and v <= 100.0
+        return not IsNaN(v)
+            and not IsInfinite(v)
+            and v >= 0.0
+            and v <= 100.0;
     }
 
-    function WeightedAverage(
-        metrics : Metric[]
-    ) : Double {
+    function WeightedAverage(metrics : Metric[]) : Double {
 
         mutable totalWeight = 0.0;
-        mutable sum = 0.0;
+        mutable weightedSum = 0.0;
 
-        for m in metrics {
+        for metric in metrics {
 
-            let (_, value, weight) = m!;
+            let (_, value, weight) = metric!;
 
             if not IsValidScore(value) {
                 fail "Invalid score.";
             }
 
-            if IsNaN(weight) or IsInfinite(weight) or weight < 0.0 {
+            if weight < 0.0
+                or IsNaN(weight)
+                or IsInfinite(weight) {
                 fail "Weight must be finite and nonnegative.";
             }
 
             set totalWeight += weight;
-            set sum += value * weight;
+            set weightedSum += value * weight;
         }
 
         if totalWeight <= 0.0 {
-            fail "Weight sum must be positive.";
+            fail "Total weight must be positive.";
         }
 
-        sum / totalWeight
+        return weightedSum / totalWeight;
     }
 
     function MultiAgentConsensus(
@@ -92,9 +94,9 @@ namespace AGIMesh {
             }
         }
 
-        100.0
-        * IntAsDouble(best)
-        / IntAsDouble(Length(agents))
+        return 100.0
+            * IntAsDouble(best)
+            / IntAsDouble(Length(agents));
     }
 
     operation QuantumCorrelation(
@@ -102,95 +104,70 @@ namespace AGIMesh {
     ) : Double {
 
         if shots <= 0 {
-            fail "Invalid shots.";
+            fail "shots must be positive.";
         }
-
-        use pair = Qubit[2];
 
         mutable matches = 0;
 
         for _ in 1..shots {
 
+            use pair = Qubit[2];
+
             H(pair[0]);
             CNOT(pair[0], pair[1]);
 
-            let a = Microsoft.Quantum.Measurement.MResetZ(pair[0]);
-            let b = Microsoft.Quantum.Measurement.MResetZ(pair[1]);
+            let r1 = MResetZ(pair[0]);
+            let r2 = MResetZ(pair[1]);
 
-            if a == b {
+            if r1 == r2 {
                 set matches += 1;
             }
         }
 
-        100.0
-        *
-        IntAsDouble(matches)
-        /
-        IntAsDouble(shots)
+        return 100.0
+            * IntAsDouble(matches)
+            / IntAsDouble(shots);
     }
 
     function CalculateACI(
         scores : CapabilityScores
     ) : Double {
 
-        WeightedAverage([
+        let (
+            reasoning,
+            toolUsage,
+            memory,
+            selfCorrection,
+            coordination,
+            quantum
+        ) = scores!;
 
-            Metric(
-                "reasoning",
-                scores::Reasoning,
-                0.25
-            ),
-
-            Metric(
-                "tool_usage",
-                scores::ToolUsage,
-                0.15
-            ),
-
-            Metric(
-                "memory",
-                scores::Memory,
-                0.15
-            ),
-
-            Metric(
-                "self_correction",
-                scores::SelfCorrection,
-                0.15
-            ),
-
-            Metric(
-                "coordination",
-                scores::AgentCoordination,
-                0.15
-            ),
-
-            Metric(
-                "quantum",
-                scores::QuantumCorrelation,
-                0.15
-            )
-        ])
+        return WeightedAverage([
+            Metric("reasoning", reasoning, 0.25),
+            Metric("tool_usage", toolUsage, 0.15),
+            Metric("memory", memory, 0.15),
+            Metric("self_correction", selfCorrection, 0.15),
+            Metric("coordination", coordination, 0.15),
+            Metric("quantum", quantum, 0.15)
+        ]);
     }
 
     operation RunBenchmark() : BenchmarkResult {
 
-        let scores =
-            CapabilityScores(
-                90.0,
-                88.0,
-                87.0,
-                92.0,
-                81.0,
-                100.0
-            );
+        let scores = CapabilityScores(
+            90.0,
+            88.0,
+            87.0,
+            92.0,
+            81.0,
+            100.0
+        );
 
-        let aci =
-            CalculateACI(scores);
+        let aci = CalculateACI(scores);
 
         let consensus =
             MultiAgentConsensus(
-                [1,1,1,2]
+                [1, 1, 1, 2]
             );
 
         let qc =
@@ -204,5 +181,23 @@ namespace AGIMesh {
             consensus,
             qc
         );
+    }
+
+    @EntryPoint()
+    operation Main() : Unit {
+
+        let result = RunBenchmark();
+
+        let (
+            version,
+            aci,
+            consensus,
+            qc
+        ) = result!;
+
+        Message($"AGI Mesh Version: {version}");
+        Message($"Capability Index: {aci}");
+        Message($"Consensus: {consensus}");
+        Message($"Quantum Correlation: {qc}");
     }
 }
